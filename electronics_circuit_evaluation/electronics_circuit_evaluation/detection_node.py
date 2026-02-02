@@ -7,7 +7,6 @@ import numpy as np
 import os 
 import supervision as sv
 from inference import get_model
-from PIL import Image
 from io import BytesIO
 import requests
 from electronics_circuit_evaluation_msgs.msg import Detection, DetectionArray
@@ -63,7 +62,7 @@ class DetectionNode(Node):
             msg_det.bbox = [int(x) for x in det['bbox']]
             detection_array.detections.append(msg_det)
             
-        self.publisher_.publish(detection_array)
+        self.detections_publisher_.publish(detection_array)
         self.image_publisher_.publish(self.bridge.cv2_to_imgmsg(annotated_image, 'bgr8'))
         # self.get_logger().info(f'Published {len(detection_array.detections)} detections.')
 
