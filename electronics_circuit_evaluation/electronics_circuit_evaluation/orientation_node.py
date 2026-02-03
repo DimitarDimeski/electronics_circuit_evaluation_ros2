@@ -21,6 +21,7 @@ class OrientationNode(Node):
         self.ts.registerCallback(self.callback)
         
         self.publisher_ = self.create_publisher(OrientedComponentArray, 'oriented_components', 10)
+        self.debug_image_pub = self.create_publisher(Image, '/electronics_circuit_evaluation/orientation_debug', 10)
         self.bridge = CvBridge()
         
         # Reference mapping: class_name -> {image: np.array, connections: {name: (x, y)}}
@@ -70,10 +71,11 @@ class OrientationNode(Node):
         oriented_array = OrientedComponentArray()
         oriented_array.header = image_msg.header
         
+        debug_images = []
+        
         for det in det_msg.detections:
             if det.class_name not in self.reference_data:
                 continue
-
 
             self.get_logger().info(f'Processing component: {det.class_name}')
 
@@ -83,6 +85,20 @@ class OrientationNode(Node):
             
             ref_info = self.reference_data[det.class_name]
             ref_img = ref_info['image']
+
+            if ref_img is None:
+                self.get_logger().error(f'Reference image for {det.class_name} not found.')
+                continue
+
+            # Create side-by-side image for debug
+            h_crop, w_crop = crop.shape[:2]
+            h_ref, w_ref = ref_img.shape[:2]
+            
+            if h_crop > 0 and h_ref > 0:
+                # Resize ref to match crop height
+                ref_resized = cv2.resize(ref_img, (int(w_ref * h_crop / h_ref), h_crop))
+                combined = np.hstack((ref_resized, crop))
+                debug_images.append(combined)
 
             self.get_logger().info(f'Reference image: {ref_img.shape}')
             self.get_logger().info(f'Crop image: {crop.shape}')
@@ -123,6 +139,24 @@ class OrientationNode(Node):
                 oriented_array.components.append(comp)
         
         self.publisher_.publish(oriented_array)
+
+        if debug_images:
+            # Stack all debug images vertically
+            max_w = max(img.shape[1] for img in debug_images)
+            processed_debug_images = []
+            for img in debug_images:
+                h, w = img.shape[:2]
+                if w < max_w:
+                    padded = np.zeros((h, max_w, 3), dtype=np.uint8)
+                    padded[:, :w] = img
+                    processed_debug_images.append(padded)
+                else:
+                    processed_debug_images.append(img)
+            
+            final_debug_image = np.vstack(processed_debug_images)
+            debug_msg = self.bridge.cv2_to_imgmsg(final_debug_image, encoding='bgr8')
+            debug_msg.header = image_msg.header
+            self.debug_image_pub.publish(debug_msg)
 
     def find_affine_transform(self, ref_img, target_img):
         # Feature-based matching to find the affine transform
