@@ -40,8 +40,9 @@ class DetectionNode(Node):
             "#b266ff", "#9999ff", "#66ffff", "#33ff99", "#66ff66", "#99ff00"
         ])
 
-        self.bbox_annotator = sv.BoxAnnotator()
+        self.bbox_annotator = sv.BoxAnnotator(color=color)
         self.label_annotator = sv.LabelAnnotator(
+            color=color,
             text_color=sv.Color.BLACK)
 
         # self.model = RFDETR(weights='path/to/weights.pth')
@@ -76,11 +77,11 @@ class DetectionNode(Node):
         detection_array = DetectionArray()
         detection_array.header = msg.header
         
-        for det in detections:
+        for xyxy, confidence, class_id in zip(detections.xyxy, detections.confidence, detections.class_id):
             msg_det = Detection()
-            msg_det.class_name = det['class']
-            msg_det.confidence = float(det['conf'])
-            msg_det.bbox = [int(x) for x in det['bbox']]
+            msg_det.class_name = self.class_names[class_id]
+            msg_det.confidence = float(confidence)
+            msg_det.bbox = [int(x) for x in xyxy]
             detection_array.detections.append(msg_det)
             
         self.detections_publisher_.publish(detection_array)
