@@ -117,8 +117,9 @@ class OrientationNode(Node):
                 tx = matrix[0, 2]
                 ty = matrix[1, 2]
                 angle = np.arctan2(matrix[1, 0], matrix[0, 0])
+                angle_deg = np.degrees(angle)
 
-                self.get_logger().info(f'Rotation: {angle}')
+                self.get_logger().info(f'Rotation: {angle_deg:.2f} degrees')
                 
                 comp.center = Point(x=float(x1 + tx), y=float(y1 + ty), z=0.0)
                 comp.rotation = float(angle)
