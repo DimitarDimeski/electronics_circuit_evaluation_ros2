@@ -5,6 +5,7 @@ from cv_bridge import CvBridge
 import cv2
 import numpy as np
 import os
+import math
 from electronics_circuit_evaluation_msgs.msg import Detection, DetectionArray, OrientedComponent, OrientedComponentArray, ConnectionPoint
 from geometry_msgs.msg import Point
 import message_filters
@@ -106,7 +107,15 @@ class OrientationNode(Node):
             # Find orientation using estimateAffinePartial2D
             # This typically involves feature matching (ORB/SIFT)
             # For simplicity, let's assume we have a function find_affine_transform
-            matrix = self.find_affine_transform(ref_img, crop)
+            # matrix = self.find_affine_transform(ref_img, crop)
+            matrix = None
+
+            angle1, _ = self.orientation_from_white_symbol(crop)
+            angle2, _ = self.orientation_from_white_symbol(ref_img)
+
+            relative_rotation = angle2 - angle1
+
+            self.get_logger().info(f'Relative rotation (deg): {relative_rotation:.2f}')
             
             if matrix is not None:
                 comp = OrientedComponent()
@@ -227,6 +236,82 @@ class OrientationNode(Node):
                 return None
                 
         return matrix
+
+
+    def orientation_from_white_symbol(
+        self,
+        image_bgr,
+        min_area=100
+    ):
+        """
+        Estimate orientation (in degrees) of a white symbol on a blue puck
+        using contour + PCA.
+
+        Args:
+            image_bgr (np.ndarray): Input image (BGR, OpenCV format)
+            min_area (int): Minimum contour area to keep
+
+        Returns:
+            angle_deg (float): Orientation angle in degrees, range [-90, 90)
+            debug (dict): Optional debug outputs
+        """
+
+        # --- 1. Convert to HSV and threshold white ---
+        hsv = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2HSV)
+
+        # White: low saturation, high value
+        lower_white = np.array([0, 0, 200])
+        upper_white = np.array([180, 40, 255])
+        mask = cv2.inRange(hsv, lower_white, upper_white)
+
+        # --- 2. Morphological cleanup ---
+        kernel = np.ones((3, 3), np.uint8)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+
+        # --- 3. Find contours ---
+        contours, _ = cv2.findContours(
+            mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE
+        )
+
+        # Keep only meaningful contours
+        contours = [c for c in contours if cv2.contourArea(c) > min_area]
+        if len(contours) == 0:
+            raise ValueError("No valid white contours found")
+
+        # Merge all contours into one point cloud
+        pts = np.vstack(contours).squeeze().astype(np.float32)
+
+        # --- 4. PCA ---
+        mean = np.mean(pts, axis=0)
+        pts_centered = pts - mean
+
+        cov = np.cov(pts_centered.T)
+        eigenvalues, eigenvectors = np.linalg.eig(cov)
+
+        # Dominant direction
+        idx = np.argmax(eigenvalues)
+        direction = eigenvectors[:, idx]
+
+        # --- 5. Angle computation ---
+        angle_rad = math.atan2(direction[1], direction[0])
+        angle_deg = np.degrees(angle_rad)
+
+        # Normalize to [-90, 90)
+        if angle_deg < -90:
+            angle_deg += 180
+        elif angle_deg >= 90:
+            angle_deg -= 180
+
+        debug = {
+            "mask": mask,
+            "points": pts,
+            "mean": mean,
+            "direction": direction
+        }
+
+        return angle_deg, debug
+
 
 def main(args=None):
     rclpy.init(args=args)
