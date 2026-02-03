@@ -241,7 +241,7 @@ class OrientationNode(Node):
     def orientation_from_white_symbol(
         self,
         image_bgr,
-        min_area=100
+        min_area=10
     ):
         """
         Estimate orientation (in degrees) of a white symbol on a blue puck
