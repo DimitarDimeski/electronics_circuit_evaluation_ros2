@@ -160,17 +160,27 @@ class OrientationNode(Node):
 
     def find_affine_transform(self, ref_img, target_img):
         # Feature-based matching to find the affine transform
-        orb = cv2.ORB_create()
+        # Using more sensitive ORB parameters for small images
+        orb = cv2.ORB_create(nfeatures=2000, patchSize=7, edgeThreshold=7)
         kp1, des1 = orb.detectAndCompute(ref_img, None)
         kp2, des2 = orb.detectAndCompute(target_img, None)
+
+        # Fallback to SIFT if ORB fails (SIFT is often better for small/low-texture images)
+        if len(kp1) < 10 or len(kp2) < 10:
+            self.get_logger().info('ORB found few keypoints, trying SIFT...')
+            sift = cv2.SIFT_create()
+            kp1, des1 = sift.detectAndCompute(ref_img, None)
+            kp2, des2 = sift.detectAndCompute(target_img, None)
+            bf = cv2.BFMatcher(cv2.NORM_L2, crossCheck=True)
+        else:
+            bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
 
         self.get_logger().info(f'Keypoints 1: {len(kp1)}')
         self.get_logger().info(f'Keypoints 2: {len(kp2)}')
         
-        if des1 is None or des2 is None:
+        if des1 is None or des2 is None or len(kp1) < 4 or len(kp2) < 4:
             return None
             
-        bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
         matches = bf.match(des1, des2)
 
         self.get_logger().info(f'Matches: {len(matches)}')
