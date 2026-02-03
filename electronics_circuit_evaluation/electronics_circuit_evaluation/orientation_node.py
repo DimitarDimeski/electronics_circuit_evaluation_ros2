@@ -83,6 +83,9 @@ class OrientationNode(Node):
             
             ref_info = self.reference_data[det.class_name]
             ref_img = ref_info['image']
+
+            self.get_logger().info(f'Reference image: {ref_img.shape}')
+            self.get_logger().info(f'Crop image: {crop.shape}')
             
             # Find orientation using estimateAffinePartial2D
             # This typically involves feature matching (ORB/SIFT)
@@ -126,6 +129,9 @@ class OrientationNode(Node):
         orb = cv2.ORB_create()
         kp1, des1 = orb.detectAndCompute(ref_img, None)
         kp2, des2 = orb.detectAndCompute(target_img, None)
+
+        self.get_logger().info(f'Keypoints 1: {len(kp1)}')
+        self.get_logger().info(f'Keypoints 2: {len(kp2)}')
         
         if des1 is None or des2 is None:
             return None
