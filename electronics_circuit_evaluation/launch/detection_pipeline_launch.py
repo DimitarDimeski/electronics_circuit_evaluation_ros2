@@ -20,6 +20,14 @@ def generate_launch_description():
             name='detection_node',
             output='screen'
         ),
+
+        # Orientation Node
+        Node(
+            package='electronics_circuit_evaluation',
+            executable='orientation_node',
+            name='orientation_node',
+            output='screen'
+        ),
         
         # RViz2
         Node(
