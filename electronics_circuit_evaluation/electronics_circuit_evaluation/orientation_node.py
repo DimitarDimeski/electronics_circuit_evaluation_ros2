@@ -132,6 +132,8 @@ class OrientationNode(Node):
             
         bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
         matches = bf.match(des1, des2)
+
+        self.get_logger().info(f'Matches: {len(matches)}')
         
         if len(matches) < 4:
             return None
@@ -140,6 +142,8 @@ class OrientationNode(Node):
         dst_pts = np.float32([kp2[m.trainIdx].pt for m in matches]).reshape(-1, 1, 2)
         
         matrix, inliers = cv2.estimateAffinePartial2D(src_pts, dst_pts)
+
+        self.get_logger().info(f'Matrix: {matrix}')
         return matrix
 
 def main(args=None):
