@@ -49,11 +49,10 @@ class DetectionNode(Node):
         self.get_logger().info('Detection node started.')
 
         self.class_names = ['components', 'battery_holder_module', 'connecting_plug', 'connector_angled', 'connector_angled_with_socket', 
-                             'connector_interrupted', 'connector_straight', 'connector_straight_with_socket', 'connector_t_shaped', 'connector_t_shaped_with_socket',
-                            'glass_tank', 'human_model_for_electrical_safety', 'junction', 'junction_connector',
+                             'connector_interrupted', 'connector_straight', 'connector_straight_with_socket', 'connector_t_shaped', 'glass_tank',
+                            'human_model_for_electrical_safety', 'junction',
                             'npn_transistor', 'ntc_resistor', 'ptc_resistor', 'resistor_100', 'resistor_10k',
-                            'resistor_50', 'socket_for_incandescent_lamp', 'switch_change_over', 'switch_on_off', 
-                            'transistor_npn', 'transistor_pnp', 'led_blue', 'led_green', 'led_red', 'led_yellow', 'led_white']
+                            'resistor_50', 'socket_for_incandescent_lamp', 'switch_change_over', 'switch_on_off']
 
     def listener_callback(self, msg):
         # Convert ROS Image to OpenCV image

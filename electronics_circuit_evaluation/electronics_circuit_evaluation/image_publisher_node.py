@@ -12,7 +12,7 @@ class ImagePublisherNode(Node):
         self.timer_period = 10.0  # seconds
         self.timer = self.create_timer(self.timer_period, self.timer_callback)
         self.bridge = CvBridge()
-        self.image_path = '/circuit_detection.v5i.coco/train/Screenshot-from-2025-12-08-20-38-21_png.rf.d8072b40d1d714a289cd1664821e85ca.jpg'
+        self.image_path = '/circuit_detection.v5i.coco/train/Screenshot-from-2025-12-08-20-38-54_png.rf.d89225c00792aaa43dc1e665ceffe222.jpg'
         
 
     def timer_callback(self):
