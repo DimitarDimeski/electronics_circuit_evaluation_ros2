@@ -34,18 +34,15 @@ class DetectionNode(Node):
         self.get_logger().info('Initializing RF-DETR model...')
         self.model = RFDETRNano(pretrain_weights='/circuit_detection.v5i.coco/trained/030220251140/checkpoint_best_total.pth')
 
-        text_scale = sv.calculate_optimal_text_scale(resolution_wh=image.size)
-        thickness = sv.calculate_optimal_line_thickness(resolution_wh=image.size)
+
         color = sv.ColorPalette.from_hex([
             "#ffff00", "#ff9b00", "#ff66ff", "#3399ff", "#ff66b2", "#ff8080",
             "#b266ff", "#9999ff", "#66ffff", "#33ff99", "#66ff66", "#99ff00"
         ])
 
-        self.bbox_annotator = sv.BoxAnnotator(color=color,thickness=thickness)
+        self.bbox_annotator = sv.BoxAnnotator()
         self.label_annotator = sv.LabelAnnotator(
-            color=color,
-            text_color=sv.Color.BLACK,
-            text_scale=text_scale)
+            text_color=sv.Color.BLACK)
 
         # self.model = RFDETR(weights='path/to/weights.pth')
         self.get_logger().info('Detection node started.')
