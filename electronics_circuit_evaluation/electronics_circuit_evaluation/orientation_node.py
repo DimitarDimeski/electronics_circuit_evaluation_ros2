@@ -37,7 +37,33 @@ class OrientationNode(Node):
         #     'image': cv2.imread('path/to/resistor_ref.png'),
         #     'connections': {'P1': (-50, 0), 'P2': (50, 0)}
         # }
-        pass
+
+        self.reference_data= {
+            'connector_angled': {
+                'image': cv2.imread('/circuit_detection.v5i.coco/cropped_ref_images/connector_angled.png'),
+                'connections': {'P1': (0, 35), 'P2': (25, 0)}
+            },
+            'switch_on_off': {
+                'image': cv2.imread('/circuit_detection.v5i.coco/cropped_ref_images/switch_on_off.png'),
+                'connections': {'P1': (-25, 0), 'P2': (25, 0)}
+            },
+            'connector_straight': {
+                'image': cv2.imread('/circuit_detection.v5i.coco/cropped_ref_images/connector_straight.png'),
+                'connections': {'P1': (-25, 0), 'P2': (25, 0)}
+            },
+            'connector_t_shaped': {
+                'image': cv2.imread('/circuit_detection.v5i.coco/cropped_ref_images/connector_t_shaped.png'),
+                'connections': {'P1': (-25, 0), 'P2': (25, 0), 'P3': (0, 35)}
+            },
+            'socket_for_incandescent_lamp': {
+                'image': cv2.imread('/circuit_detection.v5i.coco/cropped_ref_images/socket_for_incandescent_lamp.png'),
+                'connections': {'P1': (-25, 0), 'P2': (25, 0)}
+            },
+            'junction': {
+                'image': cv2.imread('/circuit_detection.v5i.coco/cropped_ref_images/junction.png'),
+                'connections': {'P1': (-25, 0)}
+            }
+        }
 
     def callback(self, image_msg, det_msg):
         cv_image = self.bridge.imgmsg_to_cv2(image_msg, desired_encoding='bgr8')
@@ -47,7 +73,10 @@ class OrientationNode(Node):
         for det in det_msg.detections:
             if det.class_name not in self.reference_data:
                 continue
-                
+
+
+            self.get_logger().info(f'Processing component: {det.class_name}')
+
             # Extract bounding box
             x1, y1, x2, y2 = det.bbox
             crop = cv_image[y1:y2, x1:x2]
@@ -69,6 +98,8 @@ class OrientationNode(Node):
                 tx = matrix[0, 2]
                 ty = matrix[1, 2]
                 angle = np.arctan2(matrix[1, 0], matrix[0, 0])
+
+                self.get_logger().info(f'Rotation: {angle}')
                 
                 comp.center = Point(x=float(x1 + tx), y=float(y1 + ty), z=0.0)
                 comp.rotation = float(angle)
