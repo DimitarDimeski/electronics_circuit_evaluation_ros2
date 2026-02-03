@@ -260,8 +260,8 @@ class OrientationNode(Node):
         hsv = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2HSV)
 
         # White: low saturation, high value
-        lower_white = np.array([0, 0, 200])
-        upper_white = np.array([180, 40, 255])
+        lower_white = np.array([0, 0, 160])     # allow darker whites
+        upper_white = np.array([180, 80, 255])  # allow more saturation
         mask = cv2.inRange(hsv, lower_white, upper_white)
 
         # --- 2. Morphological cleanup ---
