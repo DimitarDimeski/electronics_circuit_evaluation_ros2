@@ -25,6 +25,7 @@ setup(
             'orientation_node = electronics_circuit_evaluation.orientation_node:main',
             'connectivity_node = electronics_circuit_evaluation.connectivity_node:main',
             'evaluation_node = electronics_circuit_evaluation.evaluation_node:main',
+            'image_publisher_node = electronics_circuit_evaluation.image_publisher_node:main',
         ],
     },
 )

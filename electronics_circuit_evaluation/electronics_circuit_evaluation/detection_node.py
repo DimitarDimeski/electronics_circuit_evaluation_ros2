@@ -7,6 +7,7 @@ import numpy as np
 import os 
 import supervision as sv
 from inference import get_model
+from rfdetr import RFDETRNano
 from io import BytesIO
 import requests
 from electronics_circuit_evaluation_msgs.msg import Detection, DetectionArray
@@ -31,26 +32,49 @@ class DetectionNode(Node):
         
         # Load RF-DETR model
         self.get_logger().info('Initializing RF-DETR model...')
-        self.model = get_model('circuit_detection-q6xm3')
+        self.model = RFDETRNano(pretrain_weights='/circuit_detection.v5i.coco/trained/030220251140/checkpoint_best_total.pth')
+
+        text_scale = sv.calculate_optimal_text_scale(resolution_wh=image.size)
+        thickness = sv.calculate_optimal_line_thickness(resolution_wh=image.size)
+        color = sv.ColorPalette.from_hex([
+            "#ffff00", "#ff9b00", "#ff66ff", "#3399ff", "#ff66b2", "#ff8080",
+            "#b266ff", "#9999ff", "#66ffff", "#33ff99", "#66ff66", "#99ff00"
+        ])
+
+        self.bbox_annotator = sv.BoxAnnotator(color=color,thickness=thickness)
+        self.label_annotator = sv.LabelAnnotator(
+            color=color,
+            text_color=sv.Color.BLACK,
+            text_scale=text_scale)
+
         # self.model = RFDETR(weights='path/to/weights.pth')
         self.get_logger().info('Detection node started.')
+
+        self.class_names = ['components', 'battery_holder_module', 'connecting_plug', 'connector_angled', 'connector_angled_with_socket', 
+                             'connector_interrupted', 'connector_straight', 'connector_straight_with_socket', 'connector_t_shaped', 'connector_t_shaped_with_socket',
+                            'glass_tank', 'human_model_for_electrical_safety', 'junction', 'junction_connector',
+                            'npn_transistor', 'ntc_resistor', 'ptc_resistor', 'resistor_100', 'resistor_10k',
+                            'resistor_50', 'socket_for_incandescent_lamp', 'switch_change_over', 'switch_on_off', 
+                            'transistor_npn', 'transistor_pnp', 'led_blue', 'led_green', 'led_red', 'led_yellow', 'led_white']
 
     def listener_callback(self, msg):
         # Convert ROS Image to OpenCV image
         cv_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
         
         # Perform detection
-        predictions = self.model.infer(cv_image, confidence=0.5)[0]
+        detections = self.model.predict(cv_image, confidence=0.8)
 
-        detections = sv.Detections.from_inference(predictions)
+        detections_labels = [
+        f"{self.class_names[class_id]} {confidence:.2f}"
+        for class_id, confidence
+        in zip(detections.class_id, detections.confidence)
+]
        
         self.get_logger().info(f'Detections: {detections}')
 
-        labels = [prediction.class_name for prediction in predictions.predictions]
-
-        annotated_image = cv_image.copy()
-        annotated_image = sv.BoxAnnotator().annotate(annotated_image, detections)
-        annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections, labels)
+        detections_image = cv_image.copy()
+        detections_image = self.bbox_annotator.annotate(detections_image, detections)
+        detections_image = self.label_annotator.annotate(detections_image, detections, detections_labels)
         
         detection_array = DetectionArray()
         detection_array.header = msg.header
@@ -63,7 +87,7 @@ class DetectionNode(Node):
             detection_array.detections.append(msg_det)
             
         self.detections_publisher_.publish(detection_array)
-        self.image_publisher_.publish(self.bridge.cv2_to_imgmsg(annotated_image, 'bgr8'))
+        self.image_publisher_.publish(self.bridge.cv2_to_imgmsg(detections_image, 'bgr8'))
         # self.get_logger().info(f'Published {len(detection_array.detections)} detections.')
 
 def main(args=None):
