@@ -274,6 +274,8 @@ class OrientationNode(Node):
             mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE
         )
 
+        self.get_logger().info(f'Contours: {len(contours)}')
+
         # Keep only meaningful contours
         contours = [c for c in contours if cv2.contourArea(c) > min_area]
         if len(contours) == 0:
