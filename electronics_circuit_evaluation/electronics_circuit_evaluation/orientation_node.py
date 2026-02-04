@@ -1,4 +1,3 @@
-from re import M
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Image
@@ -176,13 +175,19 @@ class OrientationNode(Node):
             max_w = max(img.shape[1] for img in debug_images)
             processed_debug_images = []
             for img in debug_images:
-                h, w = img.shape[:2]
+                # Ensure 3 channels for visualization (masks are 1-channel)
+                if len(img.shape) == 2:
+                    img_viz = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+                else:
+                    img_viz = img
+                
+                h, w = img_viz.shape[:2]
                 if w < max_w:
                     padded = np.zeros((h, max_w, 3), dtype=np.uint8)
-                    padded[:, :w] = img
+                    padded[:, :w, :] = img_viz
                     processed_debug_images.append(padded)
                 else:
-                    processed_debug_images.append(img)
+                    processed_debug_images.append(img_viz)
             
             final_debug_image = np.vstack(processed_debug_images)
             debug_msg = self.bridge.cv2_to_imgmsg(final_debug_image, encoding='bgr8')
@@ -190,20 +195,24 @@ class OrientationNode(Node):
             self.debug_image_pub.publish(debug_msg)
 
     def find_affine_transform(self, ref_img, target_img):
+        # Preprocessing: A slight blur helps feature detection on binary masks
+        # by creating a gradient at the edges.
+        ref_blur = cv2.GaussianBlur(ref_img, (3, 3), 0)
+        target_blur = cv2.GaussianBlur(target_img, (3, 3), 0)
 
         # Feature-based matching
         # Using more sensitive ORB parameters for small images
         orb = cv2.ORB_create(nfeatures=2000, patchSize=7, edgeThreshold=7)
-        kp1, des1 = orb.detectAndCompute(ref_img, None)
-        kp2, des2 = orb.detectAndCompute(target_img, None)
+        kp1, des1 = orb.detectAndCompute(ref_blur, None)
+        kp2, des2 = orb.detectAndCompute(target_blur, None)
 
         # Fallback to SIFT if ORB fails
         using_sift = False
         if len(kp1) < 20 or len(kp2) < 20:
             self.get_logger().info('ORB found few keypoints, trying SIFT...')
             sift = cv2.SIFT_create()
-            kp1, des1 = sift.detectAndCompute(ref_img, None)
-            kp2, des2 = sift.detectAndCompute(target_img, None)
+            kp1, des1 = sift.detectAndCompute(ref_blur, None)
+            kp2, des2 = sift.detectAndCompute(target_blur, None)
             using_sift = True
 
         if des1 is None or des2 is None or len(kp1) < 4 or len(kp2) < 4:
@@ -217,15 +226,14 @@ class OrientationNode(Node):
             
         matches = bf.knnMatch(des1, des2, k=2)
         
-        # Apply ratio test
+        # Apply ratio test (standard Lowe's ratio is 0.7-0.8)
         good_matches = []
         for m_n in matches:
             if len(m_n) == 2:
                 m, n = m_n
-                if m.distance < 0.75 * n.distance:
+                if m.distance < 0.7 * n.distance:
                     good_matches.append(m)
             elif len(m_n) == 1:
-                # If only one match found, keep it if it's high quality (optional)
                 good_matches.append(m_n[0])
 
         self.get_logger().info(f'Good matches after ratio test: {len(good_matches)}')
@@ -236,8 +244,17 @@ class OrientationNode(Node):
         src_pts = np.float32([kp1[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
         dst_pts = np.float32([kp2[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
         
-        # Estimate transformation using RANSAC
-        matrix, inliers = cv2.estimateAffinePartial2D(src_pts, dst_pts, method=cv2.RANSAC, ransacReprojThreshold=3.0)
+        # Use USAC_ACCURATE if available (OpenCV 4.5+), otherwise RANSAC
+        method = cv2.RANSAC
+        if hasattr(cv2, 'USAC_ACCURATE'):
+            method = cv2.USAC_ACCURATE
+            
+        # Estimate transformation. 
+        # ransacReprojThreshold is the maximum allowed distance for a point to be an inlier.
+        # For binary masks, we want this to be tight.
+        matrix, inliers = cv2.estimateAffinePartial2D(src_pts, dst_pts, 
+                                                      method=method, 
+                                                      ransacReprojThreshold=2.0)
 
         if matrix is not None:
             inlier_count = np.sum(inliers)
