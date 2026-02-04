@@ -85,55 +85,75 @@ class OrientationNode(Node):
             crop = cv_image[y1:y2, x1:x2]
             
             ref_info = self.reference_data[det.class_name]
-            ref_img = ref_info['image']
+            ref_img_color = ref_info['image'].copy()
+            crop_color = crop.copy()
 
-            # --- 1. Convert to HSV and threshold white ---
-            hsv_ref = cv2.cvtColor(ref_img, cv2.COLOR_BGR2HSV)
+            # --- 1. Apply circular crop (radius 25 from center) ---
+            def circular_mask(img, radius=25):
+                h, w = img.shape[:2]
+                mask = np.zeros((h, w), dtype=np.uint8)
+                cv2.circle(mask, (w // 2, h // 2), radius, 255, -1)
+                return cv2.bitwise_and(img, img, mask=mask)
 
-            # Broadened white range: lower min value (150) and higher max saturation (80)
-            lower_white = np.array([0, 0, 150])
+            ref_img_color = circular_mask(ref_img_color)
+            crop_color = circular_mask(crop_color)
+
+            # --- 2. Convert to HSV and threshold white ---
+            hsv_ref = cv2.cvtColor(ref_img_color, cv2.COLOR_BGR2HSV)
+
+            # Broadened white range
+            lower_white = np.array([0, 0, 125])
             upper_white = np.array([180, 80, 255])
             mask_ref = cv2.inRange(hsv_ref, lower_white, upper_white)
 
-            # --- 2. Morphological cleanup ---
-            # Use a slightly larger kernel for closing to bridge gaps
+            # --- 3. Morphological cleanup ---
             kernel_close = np.ones((5, 5), np.uint8)
             kernel_open = np.ones((3, 3), np.uint8)
             
-            # CLOSE first to join fragmented white parts, then OPEN to remove noise
             mask_ref = cv2.morphologyEx(mask_ref, cv2.MORPH_CLOSE, kernel_close)
             mask_ref = cv2.morphologyEx(mask_ref, cv2.MORPH_OPEN, kernel_open)
 
-            hsv_crop = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+            hsv_crop = cv2.cvtColor(crop_color, cv2.COLOR_BGR2HSV)
             mask_crop = cv2.inRange(hsv_crop, lower_white, upper_white)
             mask_crop = cv2.morphologyEx(mask_crop, cv2.MORPH_CLOSE, kernel_close)
             mask_crop = cv2.morphologyEx(mask_crop, cv2.MORPH_OPEN, kernel_open)
 
-            ref_img = mask_ref
-            crop = mask_crop
+            ref_img_bin = mask_ref
+            crop_bin = mask_crop
 
-            if ref_img is None:
+            if ref_img_bin is None:
                 self.get_logger().error(f'Reference image for {det.class_name} not found.')
                 continue
 
-            # Create side-by-side image for debug
-            h_crop, w_crop = crop.shape[:2]
-            h_ref, w_ref = ref_img.shape[:2]
+            # Create side-by-side image for debug: [Ref Color | Ref Mask | Crop Mask | Crop Color]
+            h_crop, w_crop = crop_bin.shape[:2]
+            h_ref, w_ref = ref_img_bin.shape[:2]
             
             if h_crop > 0 and h_ref > 0:
-                # Resize ref to match crop height
-                ref_resized = cv2.resize(ref_img, (int(w_ref * h_crop / h_ref), h_crop))
-                combined = np.hstack((ref_resized, crop))
+                # Convert masks to BGR for stacking
+                mask_ref_bgr = cv2.cvtColor(ref_img_bin, cv2.COLOR_GRAY2BGR)
+                mask_crop_bgr = cv2.cvtColor(crop_bin, cv2.COLOR_GRAY2BGR)
+
+                # Resize all to match crop height
+                def resize_to_height(img, target_h):
+                    h, w = img.shape[:2]
+                    if h == 0: return img
+                    return cv2.resize(img, (int(w * target_h / h), target_h))
+
+                ref_color_res = resize_to_height(ref_img_color, h_crop)
+                ref_mask_res = resize_to_height(mask_ref_bgr, h_crop)
+                crop_mask_res = mask_crop_bgr
+                crop_color_res = crop_color
+
+                combined = np.hstack((ref_color_res, ref_mask_res, crop_mask_res, crop_color_res))
                 debug_images.append(combined)
 
-            self.get_logger().info(f'Reference image: {ref_img.shape}')
-            self.get_logger().info(f'Crop image: {crop.shape}')
+            self.get_logger().info(f'Reference image: {ref_img_bin.shape}')
+            self.get_logger().info(f'Crop image: {crop_bin.shape}')
             
-            # Find orientation using estimateAffinePartial2D
-            # This typically involves feature matching (ORB/SIFT)
-            # For simplicity, let's assume we have a function find_affine_transform
-            matrix = self.find_affine_transform(ref_img, crop)
-
+            # Find orientation
+            #matrix = self.find_affine_transform(ref_img_bin, crop_bin)
+            matrix = None
             #angle1, _ = self.orientation_from_white_symbol(crop)
             #angle2, _ = self.orientation_from_white_symbol(ref_img)
 
