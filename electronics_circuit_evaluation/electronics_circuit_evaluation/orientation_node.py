@@ -64,6 +64,10 @@ class OrientationNode(Node):
             'junction': {
                 'image': cv2.imread('/circuit_detection.v5i.coco/cropped_ref_images/junction.png'),
                 'connections': {'P1': (-25, 0)}
+            },
+            'connector_interrupted': {
+                'image': cv2.imread('/circuit_detection.v5i.coco/cropped_ref_images/connector_interrupted.png'),
+                'connections': {'P1': (-25, 0), 'P2': (25, 0)}
             }
         }
 
