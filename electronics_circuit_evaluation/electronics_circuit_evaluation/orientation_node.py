@@ -113,8 +113,8 @@ class OrientationNode(Node):
             ref_img_color = cv2.resize(ref_img_color, (50, 50))
             crop_color = crop.copy()
 
-            # --- 2. Apply circular crop (radius 25 from center) ---
-            def circular_mask(img, radius=20):
+            # --- 2. Apply circular crop (radius 22 from center) ---
+            def circular_mask(img, radius=22):
                 h, w = img.shape[:2]
                 mask = np.zeros((h, w), dtype=np.uint8)
                 cv2.circle(mask, (w // 2, h // 2), radius, 255, -1)
@@ -156,25 +156,16 @@ class OrientationNode(Node):
             angle1, _ = self.orientation_from_white_symbol(crop_bin)
             angle2, _ = self.orientation_from_white_symbol(ref_img_bin)
 
-            # The PCA angle is the orientation of the principal axis in [-90, 90)
-            # We want to find the rotation that maps ref to crop.
-            # Base rotation candidate:
-            base_angle = angle1 - angle2
-            
-            # Since PCA has 180-degree ambiguity, we check both theta and theta + 180
-            candidates = [base_angle, base_angle + 180]
-            
+            # We check all 4 multiples of 90 degrees to find the best match.
+            # This handles PCA axis-swapping (90 deg) and ambiguity (180 deg).
             best_iou = -1
             best_angle_snapped = 0
-            candidate_masks = []
+            all_candidate_masks = []
             
-            for cand in candidates:
-                # Round each candidate to the nearest 90 degrees
-                cand_snapped = round(cand / 90.0) * 90.0
-                
+            for cand_snapped in [0.0, 90.0, 180.0, 270.0]:
                 # Rotate reference mask to see if it matches the crop mask
                 rotated_ref = self.rotate_mask(ref_img_bin, cand_snapped)
-                candidate_masks.append(cv2.cvtColor(rotated_ref, cv2.COLOR_GRAY2BGR))
+                all_candidate_masks.append(cv2.cvtColor(rotated_ref, cv2.COLOR_GRAY2BGR))
                 
                 iou = self.calculate_iou(rotated_ref, crop_bin)
                 
@@ -183,13 +174,23 @@ class OrientationNode(Node):
                     best_angle_snapped = cand_snapped
             
             relative_rotation = best_angle_snapped
+            self.get_logger().info(f'PCA Raw Angles - Crop: {angle1:.2f}, Ref: {angle2:.2f}')
             self.get_logger().info(f'Disambiguated relative rotation (deg): {relative_rotation:.2f} (IoU: {best_iou:.4f})')
 
-            # Create side-by-side image for debug: [Ref Color | Ref Mask | Rot 1 | Rot 2 | Crop Mask | Crop Color]
+            # Create side-by-side image for debug: [Ref Color | Ref Mask | Rot 0 | Rot 90 | Rot 180 | Rot 270 | Crop Mask | Crop Color]
             mask_ref_bgr = cv2.cvtColor(ref_img_bin, cv2.COLOR_GRAY2BGR)
             mask_crop_bgr = cv2.cvtColor(crop_bin, cv2.COLOR_GRAY2BGR)
 
-            combined = np.hstack((ref_img_color, mask_ref_bgr, candidate_masks[0], candidate_masks[1], mask_crop_bgr, crop_color))
+            combined = np.hstack((
+                ref_img_color, 
+                mask_ref_bgr, 
+                all_candidate_masks[0], 
+                all_candidate_masks[1], 
+                all_candidate_masks[2], 
+                all_candidate_masks[3], 
+                mask_crop_bgr, 
+                crop_color
+            ))
             debug_images.append(combined)
 
             # Build matrix using the PCA-based snapped rotation
