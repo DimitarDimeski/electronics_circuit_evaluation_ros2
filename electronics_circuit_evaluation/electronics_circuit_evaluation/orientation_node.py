@@ -97,7 +97,7 @@ class OrientationNode(Node):
             crop_color = crop.copy()
 
             # --- 2. Apply circular crop (radius 25 from center) ---
-            def circular_mask(img, radius=25):
+            def circular_mask(img, radius=20):
                 h, w = img.shape[:2]
                 mask = np.zeros((h, w), dtype=np.uint8)
                 cv2.circle(mask, (w // 2, h // 2), radius, 255, -1)
@@ -110,7 +110,7 @@ class OrientationNode(Node):
             hsv_ref = cv2.cvtColor(ref_img_color, cv2.COLOR_BGR2HSV)
 
             # Broadened white range
-            lower_white = np.array([0, 0, 100])
+            lower_white = np.array([0, 0, 175])
             upper_white = np.array([180, 80, 255])
             mask_ref = cv2.inRange(hsv_ref, lower_white, upper_white)
 
@@ -228,77 +228,41 @@ class OrientationNode(Node):
             self.debug_image_pub.publish(debug_msg)
 
     def find_affine_transform(self, ref_img, target_img):
-        # Preprocessing: A slight blur helps feature detection on binary masks
-        # by creating a gradient at the edges.
-        ref_blur = cv2.GaussianBlur(ref_img, (3, 3), 0)
-        target_blur = cv2.GaussianBlur(target_img, (3, 3), 0)
-
-        # Feature-based matching
+        # Feature-based matching to find the affine transform
         # Using more sensitive ORB parameters for small images
         orb = cv2.ORB_create(nfeatures=2000, patchSize=7, edgeThreshold=7)
-        kp1, des1 = orb.detectAndCompute(ref_blur, None)
-        kp2, des2 = orb.detectAndCompute(target_blur, None)
+        kp1, des1 = orb.detectAndCompute(ref_img, None)
+        kp2, des2 = orb.detectAndCompute(target_img, None)
 
-        # Fallback to SIFT if ORB fails
-        using_sift = False
-        if len(kp1) < 20 or len(kp2) < 20:
+        # Fallback to SIFT if ORB fails (SIFT is often better for small/low-texture images)
+        if len(kp1) < 10 or len(kp2) < 10:
             self.get_logger().info('ORB found few keypoints, trying SIFT...')
             sift = cv2.SIFT_create()
-            kp1, des1 = sift.detectAndCompute(ref_blur, None)
-            kp2, des2 = sift.detectAndCompute(target_blur, None)
-            using_sift = True
+            kp1, des1 = sift.detectAndCompute(ref_img, None)
+            kp2, des2 = sift.detectAndCompute(target_img, None)
+            bf = cv2.BFMatcher(cv2.NORM_L2, crossCheck=True)
+        else:
+            bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
 
+        self.get_logger().info(f'Keypoints 1: {len(kp1)}')
+        self.get_logger().info(f'Keypoints 2: {len(kp2)}')
+        
         if des1 is None or des2 is None or len(kp1) < 4 or len(kp2) < 4:
             return None
-
-        # Use KNN matching with Lowe's Ratio Test
-        if using_sift:
-            bf = cv2.BFMatcher(cv2.NORM_L2)
-        else:
-            bf = cv2.BFMatcher(cv2.NORM_HAMMING)
             
-        matches = bf.knnMatch(des1, des2, k=2)
-        
-        # Apply ratio test (standard Lowe's ratio is 0.7-0.8)
-        good_matches = []
-        for m_n in matches:
-            if len(m_n) == 2:
-                m, n = m_n
-                if m.distance < 0.7 * n.distance:
-                    good_matches.append(m)
-            elif len(m_n) == 1:
-                good_matches.append(m_n[0])
+        matches = bf.match(des1, des2)
 
-        self.get_logger().info(f'Good matches after ratio test: {len(good_matches)}')
+        self.get_logger().info(f'Matches: {len(matches)}')
         
-        if len(good_matches) < 4:
+        if len(matches) < 4:
             return None
             
-        src_pts = np.float32([kp1[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
-        dst_pts = np.float32([kp2[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+        src_pts = np.float32([kp1[m.queryIdx].pt for m in matches]).reshape(-1, 1, 2)
+        dst_pts = np.float32([kp2[m.trainIdx].pt for m in matches]).reshape(-1, 1, 2)
         
-        # Use USAC_ACCURATE if available (OpenCV 4.5+), otherwise RANSAC
-        method = cv2.RANSAC
-        #if hasattr(cv2, 'USAC_ACCURATE'):
-        #    method = cv2.USAC_ACCURATE
-            
-        # Estimate transformation. 
-        # ransacReprojThreshold is the maximum allowed distance for a point to be an inlier.
-        # For binary masks, we want this to be tight.
-        matrix, inliers = cv2.estimateAffinePartial2D(src_pts, dst_pts, 
-                                                      method=method, 
-                                                      ransacReprojThreshold=2.0)
+        matrix, inliers = cv2.estimateAffinePartial2D(src_pts, dst_pts)
 
-        if matrix is not None:
-            inlier_count = np.sum(inliers)
-            inlier_ratio = inlier_count / len(good_matches)
-            self.get_logger().info(f'Inliers: {inlier_count}/{len(good_matches)} (Ratio: {inlier_ratio:.2f})')
-            
-            # Reject if we don't have enough geometric agreement
-            if inlier_count < 4 or inlier_ratio < 0.3:
-                self.get_logger().warn('Rejecting transform due to low inlier count/ratio')
-                return None
-                
+        self.get_logger().info(f'Matrix: {matrix}')
         return matrix
 
 
