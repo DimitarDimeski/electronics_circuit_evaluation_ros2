@@ -71,6 +71,19 @@ class OrientationNode(Node):
             }
         }
 
+    def calculate_iou(self, mask1, mask2):
+        intersection = np.logical_and(mask1 > 0, mask2 > 0).sum()
+        union = np.logical_or(mask1 > 0, mask2 > 0).sum()
+        if union == 0:
+            return 0.0
+        return intersection / union
+
+    def rotate_mask(self, mask, angle_deg):
+        h, w = mask.shape[:2]
+        center = (w // 2, h // 2)
+        M = cv2.getRotationMatrix2D(center, angle_deg, 1.0)
+        return cv2.warpAffine(mask, M, (w, h), flags=cv2.INTER_NEAREST)
+
     def callback(self, image_msg, det_msg):
         cv_image = self.bridge.imgmsg_to_cv2(image_msg, desired_encoding='bgr8')
         oriented_array = OrientedComponentArray()
@@ -148,17 +161,37 @@ class OrientationNode(Node):
             self.get_logger().info(f'Reference image: {ref_img_bin.shape}')
             self.get_logger().info(f'Crop image: {crop_bin.shape}')
             
-            matrix = None
-
             angle1, _ = self.orientation_from_white_symbol(crop_bin)
             angle2, _ = self.orientation_from_white_symbol(ref_img_bin)
 
-            relative_rotation = angle2 - angle1
-            # Round to nearest 90 degrees
-            relative_rotation = round(relative_rotation / 90.0) * 90.0
+            # The PCA angle is the orientation of the principal axis in [-90, 90)
+            # We want to find the rotation that maps ref to crop.
+            # Base rotation candidate:
+            base_angle = angle1 - angle2
+            
+            # Since PCA has 180-degree ambiguity, we check both theta and theta + 180
+            candidates = [base_angle, base_angle + 180]
+            
+            best_iou = -1
+            best_angle_snapped = 0
+            
+            for cand in candidates:
+                # Round each candidate to the nearest 90 degrees
+                cand_snapped = round(cand / 90.0) * 90.0
+                
+                # Rotate reference mask to see if it matches the crop mask
+                rotated_ref = self.rotate_mask(ref_img_bin, cand_snapped)
+                iou = self.calculate_iou(rotated_ref, crop_bin)
+                
+                if iou > best_iou:
+                    best_iou = iou
+                    best_angle_snapped = cand_snapped
+            
+            relative_rotation = best_angle_snapped
+            self.get_logger().info(f'Disambiguated relative rotation (deg): {relative_rotation:.2f} (IoU: {best_iou:.4f})')
 
-            self.get_logger().info(f'Relative rotation (deg): {relative_rotation:.2f}')  
-
+            # Build matrix using the PCA-based snapped rotation
+            matrix = cv2.getRotationMatrix2D((25, 25), relative_rotation, 1.0)
             
             if matrix is not None:
                 comp = OrientedComponent()
@@ -179,24 +212,10 @@ class OrientationNode(Node):
                                   y=float(y1 + center_in_crop_50[1] * scale_y), 
                                   z=0.0)
                 
-                # Extract rotation (rotation is scale-invariant)
-                angle = np.arctan2(matrix[1, 0], matrix[0, 0])
-                angle_deg = np.degrees(angle)
+                # The rotation is already snapped to 90 degrees
+                comp.rotation = float(np.radians(relative_rotation))
                 
-                # Round to nearest 90 degrees as requested
-                angle_deg_rounded = round(angle_deg / 90.0) * 90.0
-                angle_snapped = np.radians(angle_deg_rounded)
-                
-                # Update matrix with snapped rotation to keep connection points consistent
-                s = np.sqrt(matrix[0, 0]**2 + matrix[1, 0]**2)
-                matrix[0, 0] = s * np.cos(angle_snapped)
-                matrix[1, 0] = s * np.sin(angle_snapped)
-                matrix[0, 1] = -s * np.sin(angle_snapped)
-                matrix[1, 1] = s * np.cos(angle_snapped)
-
-                comp.rotation = float(angle_snapped)
-                
-                self.get_logger().info(f'Rotation: {angle_deg:.2f} degrees (rounded to {angle_deg_rounded:.2f})')
+                self.get_logger().info(f'Final snapped rotation: {relative_rotation:.2f} degrees')
                 
                 # Transform connection points
                 for name, (rx, ry) in ref_info['connections'].items():
