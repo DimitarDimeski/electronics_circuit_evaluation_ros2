@@ -118,12 +118,12 @@ class OrientationNode(Node):
             kernel_close = np.ones((5, 5), np.uint8)
             kernel_open = np.ones((3, 3), np.uint8)
             
-            mask_ref = cv2.morphologyEx(mask_ref, cv2.MORPH_CLOSE, kernel_close)
+            #mask_ref = cv2.morphologyEx(mask_ref, cv2.MORPH_CLOSE, kernel_close)
             #mask_ref = cv2.morphologyEx(mask_ref, cv2.MORPH_OPEN, kernel_open)
 
             hsv_crop = cv2.cvtColor(crop_color, cv2.COLOR_BGR2HSV)
             mask_crop = cv2.inRange(hsv_crop, lower_white, upper_white)
-            mask_crop = cv2.morphologyEx(mask_crop, cv2.MORPH_CLOSE, kernel_close)
+            #mask_crop = cv2.morphologyEx(mask_crop, cv2.MORPH_CLOSE, kernel_close)
             #mask_crop = cv2.morphologyEx(mask_crop, cv2.MORPH_OPEN, kernel_open)
 
             ref_img_bin = mask_ref
@@ -145,8 +145,7 @@ class OrientationNode(Node):
             self.get_logger().info(f'Crop image: {crop_bin.shape}')
             
             # Find orientation (matrix is in 50x50 space)
-            #matrix = self.find_affine_transform(ref_img_bin, crop_bin)
-            matrix = None
+            matrix = self.find_affine_transform(ref_img_bin, crop_bin)
 
             angle1, _ = self.orientation_from_white_symbol(crop_bin)
             angle2, _ = self.orientation_from_white_symbol(ref_img_bin)
@@ -154,6 +153,7 @@ class OrientationNode(Node):
             relative_rotation = angle2 - angle1
 
             self.get_logger().info(f'Relative rotation (deg): {relative_rotation:.2f}')  
+
             
             if matrix is not None:
                 comp = OrientedComponent()
