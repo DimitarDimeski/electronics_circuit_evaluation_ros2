@@ -118,13 +118,13 @@ class OrientationNode(Node):
             kernel_close = np.ones((5, 5), np.uint8)
             kernel_open = np.ones((3, 3), np.uint8)
             
-            #mask_ref = cv2.morphologyEx(mask_ref, cv2.MORPH_CLOSE, kernel_close)
-            mask_ref = cv2.morphologyEx(mask_ref, cv2.MORPH_OPEN, kernel_open)
+            mask_ref = cv2.morphologyEx(mask_ref, cv2.MORPH_CLOSE, kernel_close)
+            #mask_ref = cv2.morphologyEx(mask_ref, cv2.MORPH_OPEN, kernel_open)
 
             hsv_crop = cv2.cvtColor(crop_color, cv2.COLOR_BGR2HSV)
             mask_crop = cv2.inRange(hsv_crop, lower_white, upper_white)
-            #mask_crop = cv2.morphologyEx(mask_crop, cv2.MORPH_CLOSE, kernel_close)
-            mask_crop = cv2.morphologyEx(mask_crop, cv2.MORPH_OPEN, kernel_open)
+            mask_crop = cv2.morphologyEx(mask_crop, cv2.MORPH_CLOSE, kernel_close)
+            #mask_crop = cv2.morphologyEx(mask_crop, cv2.MORPH_OPEN, kernel_open)
 
             ref_img_bin = mask_ref
             crop_bin = mask_crop
@@ -147,6 +147,13 @@ class OrientationNode(Node):
             # Find orientation (matrix is in 50x50 space)
             #matrix = self.find_affine_transform(ref_img_bin, crop_bin)
             matrix = None
+
+            angle1, _ = self.orientation_from_white_symbol(crop_bin)
+            angle2, _ = self.orientation_from_white_symbol(ref_img_bin)
+
+            relative_rotation = angle2 - angle1
+
+            self.get_logger().info(f'Relative rotation (deg): {relative_rotation:.2f}')  
             
             if matrix is not None:
                 comp = OrientedComponent()
@@ -313,21 +320,7 @@ class OrientationNode(Node):
             debug (dict): Optional debug outputs
         """
 
-        # --- 1. Convert to HSV and threshold white ---
-        hsv = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2HSV)
-
-        # Broadened white range: lower min value (150) and higher max saturation (80)
-        lower_white = np.array([0, 0, 150])
-        upper_white = np.array([180, 80, 255])
-        mask = cv2.inRange(hsv, lower_white, upper_white)
-
-        # --- 2. Morphological cleanup ---
-        kernel_close = np.ones((5, 5), np.uint8)
-        kernel_open = np.ones((3, 3), np.uint8)
-        
-        # CLOSE first to join fragmented white parts, then OPEN to remove noise
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel_close)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel_open)
+        mask = image_bgr
 
         # --- 3. Find contours ---
         contours, _ = cv2.findContours(
@@ -339,8 +332,7 @@ class OrientationNode(Node):
         # Keep only meaningful contours
         contours = [c for c in contours if cv2.contourArea(c) > min_area]
         if len(contours) == 0:
-            self.get_logger().error('No valid white contours found')
-            return 0, None
+            raise ValueError("No valid white contours found")
 
         # Merge all contours into one point cloud
         pts = np.vstack(contours).squeeze().astype(np.float32)
