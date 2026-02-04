@@ -250,8 +250,8 @@ class OrientationNode(Node):
         
         # Use USAC_ACCURATE if available (OpenCV 4.5+), otherwise RANSAC
         method = cv2.RANSAC
-        if hasattr(cv2, 'USAC_ACCURATE'):
-            method = cv2.USAC_ACCURATE
+        #if hasattr(cv2, 'USAC_ACCURATE'):
+        #    method = cv2.USAC_ACCURATE
             
         # Estimate transformation. 
         # ransacReprojThreshold is the maximum allowed distance for a point to be an inlier.
