@@ -87,23 +87,27 @@ class OrientationNode(Node):
             ref_info = self.reference_data[det.class_name]
             ref_img = ref_info['image']
 
-             # --- 1. Convert to HSV and threshold white ---
+            # --- 1. Convert to HSV and threshold white ---
             hsv_ref = cv2.cvtColor(ref_img, cv2.COLOR_BGR2HSV)
 
-            # White: low saturation, high value
-            lower_white = np.array([0, 0, 200])
-            upper_white = np.array([180, 40, 255])
+            # Broadened white range: lower min value (150) and higher max saturation (80)
+            lower_white = np.array([0, 0, 150])
+            upper_white = np.array([180, 80, 255])
             mask_ref = cv2.inRange(hsv_ref, lower_white, upper_white)
 
             # --- 2. Morphological cleanup ---
-            kernel = np.ones((3, 3), np.uint8)
-            mask_ref = cv2.morphologyEx(mask_ref, cv2.MORPH_OPEN, kernel)
-            mask_ref = cv2.morphologyEx(mask_ref, cv2.MORPH_CLOSE, kernel)
+            # Use a slightly larger kernel for closing to bridge gaps
+            kernel_close = np.ones((5, 5), np.uint8)
+            kernel_open = np.ones((3, 3), np.uint8)
+            
+            # CLOSE first to join fragmented white parts, then OPEN to remove noise
+            mask_ref = cv2.morphologyEx(mask_ref, cv2.MORPH_CLOSE, kernel_close)
+            mask_ref = cv2.morphologyEx(mask_ref, cv2.MORPH_OPEN, kernel_open)
 
             hsv_crop = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
             mask_crop = cv2.inRange(hsv_crop, lower_white, upper_white)
-            mask_crop = cv2.morphologyEx(mask_crop, cv2.MORPH_OPEN, kernel)
-            mask_crop = cv2.morphologyEx(mask_crop, cv2.MORPH_CLOSE, kernel)
+            mask_crop = cv2.morphologyEx(mask_crop, cv2.MORPH_CLOSE, kernel_close)
+            mask_crop = cv2.morphologyEx(mask_crop, cv2.MORPH_OPEN, kernel_open)
 
             ref_img = mask_ref
             crop = mask_crop
@@ -290,15 +294,18 @@ class OrientationNode(Node):
         # --- 1. Convert to HSV and threshold white ---
         hsv = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2HSV)
 
-        # White: low saturation, high value
-        lower_white = np.array([0, 0, 200])
-        upper_white = np.array([180, 40, 255])
+        # Broadened white range: lower min value (150) and higher max saturation (80)
+        lower_white = np.array([0, 0, 150])
+        upper_white = np.array([180, 80, 255])
         mask = cv2.inRange(hsv, lower_white, upper_white)
 
         # --- 2. Morphological cleanup ---
-        kernel = np.ones((3, 3), np.uint8)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+        kernel_close = np.ones((5, 5), np.uint8)
+        kernel_open = np.ones((3, 3), np.uint8)
+        
+        # CLOSE first to join fragmented white parts, then OPEN to remove noise
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel_close)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel_open)
 
         # --- 3. Find contours ---
         contours, _ = cv2.findContours(
