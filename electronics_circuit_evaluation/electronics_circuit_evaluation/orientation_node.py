@@ -150,14 +150,6 @@ class OrientationNode(Node):
                 self.get_logger().error(f'Reference image for {det.class_name} not found.')
                 continue
 
-            # Create side-by-side image for debug: [Ref Color | Ref Mask | Crop Mask | Crop Color]
-            # Since everything is 50x50 now, stacking is easy
-            mask_ref_bgr = cv2.cvtColor(ref_img_bin, cv2.COLOR_GRAY2BGR)
-            mask_crop_bgr = cv2.cvtColor(crop_bin, cv2.COLOR_GRAY2BGR)
-
-            combined = np.hstack((ref_img_color, mask_ref_bgr, mask_crop_bgr, crop_color))
-            debug_images.append(combined)
-
             self.get_logger().info(f'Reference image: {ref_img_bin.shape}')
             self.get_logger().info(f'Crop image: {crop_bin.shape}')
             
@@ -174,6 +166,7 @@ class OrientationNode(Node):
             
             best_iou = -1
             best_angle_snapped = 0
+            candidate_masks = []
             
             for cand in candidates:
                 # Round each candidate to the nearest 90 degrees
@@ -181,6 +174,8 @@ class OrientationNode(Node):
                 
                 # Rotate reference mask to see if it matches the crop mask
                 rotated_ref = self.rotate_mask(ref_img_bin, cand_snapped)
+                candidate_masks.append(cv2.cvtColor(rotated_ref, cv2.COLOR_GRAY2BGR))
+                
                 iou = self.calculate_iou(rotated_ref, crop_bin)
                 
                 if iou > best_iou:
@@ -189,6 +184,13 @@ class OrientationNode(Node):
             
             relative_rotation = best_angle_snapped
             self.get_logger().info(f'Disambiguated relative rotation (deg): {relative_rotation:.2f} (IoU: {best_iou:.4f})')
+
+            # Create side-by-side image for debug: [Ref Color | Ref Mask | Rot 1 | Rot 2 | Crop Mask | Crop Color]
+            mask_ref_bgr = cv2.cvtColor(ref_img_bin, cv2.COLOR_GRAY2BGR)
+            mask_crop_bgr = cv2.cvtColor(crop_bin, cv2.COLOR_GRAY2BGR)
+
+            combined = np.hstack((ref_img_color, mask_ref_bgr, candidate_masks[0], candidate_masks[1], mask_crop_bgr, crop_color))
+            debug_images.append(combined)
 
             # Build matrix using the PCA-based snapped rotation
             matrix = cv2.getRotationMatrix2D((25, 25), relative_rotation, 1.0)
