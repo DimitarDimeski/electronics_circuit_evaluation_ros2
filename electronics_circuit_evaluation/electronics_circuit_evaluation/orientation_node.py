@@ -300,7 +300,7 @@ class OrientationNode(Node):
         # Keep only meaningful contours
         contours = [c for c in contours if cv2.contourArea(c) > min_area]
         if len(contours) == 0:
-            raise ValueError("No valid white contours found")
+            return 0, None
 
         # Merge all contours into one point cloud
         pts = np.vstack(contours).squeeze().astype(np.float32)
