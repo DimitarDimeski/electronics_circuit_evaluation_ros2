@@ -1,3 +1,4 @@
+from re import M
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Image
@@ -87,6 +88,27 @@ class OrientationNode(Node):
             ref_info = self.reference_data[det.class_name]
             ref_img = ref_info['image']
 
+             # --- 1. Convert to HSV and threshold white ---
+            hsv_ref = cv2.cvtColor(ref_img, cv2.COLOR_BGR2HSV)
+
+            # White: low saturation, high value
+            lower_white = np.array([0, 0, 200])
+            upper_white = np.array([180, 40, 255])
+            mask_ref = cv2.inRange(hsv_ref, lower_white, upper_white)
+
+            # --- 2. Morphological cleanup ---
+            kernel = np.ones((3, 3), np.uint8)
+            mask_ref = cv2.morphologyEx(mask_ref, cv2.MORPH_OPEN, kernel)
+            mask_ref = cv2.morphologyEx(mask_ref, cv2.MORPH_CLOSE, kernel)
+
+            hsv_crop = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+            mask_crop = cv2.inRange(hsv_crop, lower_white, upper_white)
+            mask_crop = cv2.morphologyEx(mask_crop, cv2.MORPH_OPEN, kernel)
+            mask_crop = cv2.morphologyEx(mask_crop, cv2.MORPH_CLOSE, kernel)
+
+            ref_img = mask_ref
+            crop = mask_crop
+
             if ref_img is None:
                 self.get_logger().error(f'Reference image for {det.class_name} not found.')
                 continue
@@ -107,15 +129,14 @@ class OrientationNode(Node):
             # Find orientation using estimateAffinePartial2D
             # This typically involves feature matching (ORB/SIFT)
             # For simplicity, let's assume we have a function find_affine_transform
-            # matrix = self.find_affine_transform(ref_img, crop)
-            matrix = None
+            matrix = self.find_affine_transform(ref_img, crop)
 
-            angle1, _ = self.orientation_from_white_symbol(crop)
-            angle2, _ = self.orientation_from_white_symbol(ref_img)
+            #angle1, _ = self.orientation_from_white_symbol(crop)
+            #angle2, _ = self.orientation_from_white_symbol(ref_img)
 
-            relative_rotation = angle2 - angle1
+            #relative_rotation = angle2 - angle1
 
-            self.get_logger().info(f'Relative rotation (deg): {relative_rotation:.2f}')
+            #self.get_logger().info(f'Relative rotation (deg): {relative_rotation:.2f}')
             
             if matrix is not None:
                 comp = OrientedComponent()
@@ -169,27 +190,20 @@ class OrientationNode(Node):
             self.debug_image_pub.publish(debug_msg)
 
     def find_affine_transform(self, ref_img, target_img):
-        # Preprocessing: Convert to grayscale and improve contrast
-        ref_gray = cv2.cvtColor(ref_img, cv2.COLOR_BGR2GRAY)
-        target_gray = cv2.cvtColor(target_img, cv2.COLOR_BGR2GRAY)
-        
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-        ref_gray = clahe.apply(ref_gray)
-        target_gray = clahe.apply(target_gray)
 
         # Feature-based matching
         # Using more sensitive ORB parameters for small images
         orb = cv2.ORB_create(nfeatures=2000, patchSize=7, edgeThreshold=7)
-        kp1, des1 = orb.detectAndCompute(ref_gray, None)
-        kp2, des2 = orb.detectAndCompute(target_gray, None)
+        kp1, des1 = orb.detectAndCompute(ref_img, None)
+        kp2, des2 = orb.detectAndCompute(target_img, None)
 
         # Fallback to SIFT if ORB fails
         using_sift = False
         if len(kp1) < 20 or len(kp2) < 20:
             self.get_logger().info('ORB found few keypoints, trying SIFT...')
             sift = cv2.SIFT_create()
-            kp1, des1 = sift.detectAndCompute(ref_gray, None)
-            kp2, des2 = sift.detectAndCompute(target_gray, None)
+            kp1, des1 = sift.detectAndCompute(ref_img, None)
+            kp2, des2 = sift.detectAndCompute(target_img, None)
             using_sift = True
 
         if des1 is None or des2 is None or len(kp1) < 4 or len(kp2) < 4:
