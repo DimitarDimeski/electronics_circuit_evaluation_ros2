@@ -86,9 +86,17 @@ class OrientationNode(Node):
             
             ref_info = self.reference_data[det.class_name]
             ref_img_color = ref_info['image'].copy()
+
+            # Store original dimensions for coordinate mapping
+            orig_h, orig_w = crop.shape[:2]
+            ref_h_orig, ref_w_orig = ref_img_color.shape[:2]
+
+            # --- 1. Resize both to 50x50 ---
+            crop = cv2.resize(crop, (50, 50))
+            ref_img_color = cv2.resize(ref_img_color, (50, 50))
             crop_color = crop.copy()
 
-            # --- 1. Apply circular crop (radius 25 from center) ---
+            # --- 2. Apply circular crop (radius 25 from center) ---
             def circular_mask(img, radius=25):
                 h, w = img.shape[:2]
                 mask = np.zeros((h, w), dtype=np.uint8)
@@ -98,24 +106,24 @@ class OrientationNode(Node):
             ref_img_color = circular_mask(ref_img_color)
             crop_color = circular_mask(crop_color)
 
-            # --- 2. Convert to HSV and threshold white ---
+            # --- 3. Convert to HSV and threshold white ---
             hsv_ref = cv2.cvtColor(ref_img_color, cv2.COLOR_BGR2HSV)
 
             # Broadened white range
-            lower_white = np.array([0, 0, 125])
+            lower_white = np.array([0, 0, 100])
             upper_white = np.array([180, 80, 255])
             mask_ref = cv2.inRange(hsv_ref, lower_white, upper_white)
 
-            # --- 3. Morphological cleanup ---
+            # --- 4. Morphological cleanup ---
             kernel_close = np.ones((5, 5), np.uint8)
             kernel_open = np.ones((3, 3), np.uint8)
             
-            mask_ref = cv2.morphologyEx(mask_ref, cv2.MORPH_CLOSE, kernel_close)
+            #mask_ref = cv2.morphologyEx(mask_ref, cv2.MORPH_CLOSE, kernel_close)
             mask_ref = cv2.morphologyEx(mask_ref, cv2.MORPH_OPEN, kernel_open)
 
             hsv_crop = cv2.cvtColor(crop_color, cv2.COLOR_BGR2HSV)
             mask_crop = cv2.inRange(hsv_crop, lower_white, upper_white)
-            mask_crop = cv2.morphologyEx(mask_crop, cv2.MORPH_CLOSE, kernel_close)
+            #mask_crop = cv2.morphologyEx(mask_crop, cv2.MORPH_CLOSE, kernel_close)
             mask_crop = cv2.morphologyEx(mask_crop, cv2.MORPH_OPEN, kernel_open)
 
             ref_img_bin = mask_ref
@@ -126,68 +134,62 @@ class OrientationNode(Node):
                 continue
 
             # Create side-by-side image for debug: [Ref Color | Ref Mask | Crop Mask | Crop Color]
-            h_crop, w_crop = crop_bin.shape[:2]
-            h_ref, w_ref = ref_img_bin.shape[:2]
-            
-            if h_crop > 0 and h_ref > 0:
-                # Convert masks to BGR for stacking
-                mask_ref_bgr = cv2.cvtColor(ref_img_bin, cv2.COLOR_GRAY2BGR)
-                mask_crop_bgr = cv2.cvtColor(crop_bin, cv2.COLOR_GRAY2BGR)
+            # Since everything is 50x50 now, stacking is easy
+            mask_ref_bgr = cv2.cvtColor(ref_img_bin, cv2.COLOR_GRAY2BGR)
+            mask_crop_bgr = cv2.cvtColor(crop_bin, cv2.COLOR_GRAY2BGR)
 
-                # Resize all to match crop height
-                def resize_to_height(img, target_h):
-                    h, w = img.shape[:2]
-                    if h == 0: return img
-                    return cv2.resize(img, (int(w * target_h / h), target_h))
-
-                ref_color_res = resize_to_height(ref_img_color, h_crop)
-                ref_mask_res = resize_to_height(mask_ref_bgr, h_crop)
-                crop_mask_res = mask_crop_bgr
-                crop_color_res = crop_color
-
-                combined = np.hstack((ref_color_res, ref_mask_res, crop_mask_res, crop_color_res))
-                debug_images.append(combined)
+            combined = np.hstack((ref_img_color, mask_ref_bgr, mask_crop_bgr, crop_color))
+            debug_images.append(combined)
 
             self.get_logger().info(f'Reference image: {ref_img_bin.shape}')
             self.get_logger().info(f'Crop image: {crop_bin.shape}')
             
-            # Find orientation
+            # Find orientation (matrix is in 50x50 space)
             #matrix = self.find_affine_transform(ref_img_bin, crop_bin)
             matrix = None
-            #angle1, _ = self.orientation_from_white_symbol(crop)
-            #angle2, _ = self.orientation_from_white_symbol(ref_img)
-
-            #relative_rotation = angle2 - angle1
-
-            #self.get_logger().info(f'Relative rotation (deg): {relative_rotation:.2f}')
             
             if matrix is not None:
                 comp = OrientedComponent()
                 comp.class_name = det.class_name
                 
-                # Extract rotation and translation from the matrix
-                # matrix = [[s*cos(th), -s*sin(th), tx], [s*sin(th), s*cos(th), ty]]
-                tx = matrix[0, 2]
-                ty = matrix[1, 2]
-                angle = np.arctan2(matrix[1, 0], matrix[0, 0])
-                angle_deg = np.degrees(angle)
+                # In 50x50 space, center is 25,25
+                ref_center_x, ref_center_y = 25.0, 25.0
 
-                self.get_logger().info(f'Rotation: {angle_deg:.2f} degrees')
+                # Transform center point in 50x50 space
+                center_in_crop_50 = matrix @ np.array([ref_center_x, ref_center_y, 1.0])
                 
-                comp.center = Point(x=float(x1 + tx), y=float(y1 + ty), z=0.0)
+                # Scale factors to map back to original image coordinates
+                scale_x = orig_w / 50.0
+                scale_y = orig_h / 50.0
+
+                # Global coordinates
+                comp.center = Point(x=float(x1 + center_in_crop_50[0] * scale_x), 
+                                  y=float(y1 + center_in_crop_50[1] * scale_y), 
+                                  z=0.0)
+                
+                # Extract rotation (rotation is scale-invariant)
+                angle = np.arctan2(matrix[1, 0], matrix[0, 0])
                 comp.rotation = float(angle)
+                
+                angle_deg = np.degrees(angle)
+                self.get_logger().info(f'Rotation: {angle_deg:.2f} degrees')
                 
                 # Transform connection points
                 for name, (rx, ry) in ref_info['connections'].items():
-                    # Apply rotation and translation
-                    # [nx, ny] = [[cos, -sin], [sin, cos]] * [rx, ry] + [tx, ty]
-                    nx = rx * np.cos(angle) - ry * np.sin(angle) + tx + x1
-                    ny = rx * np.sin(angle) + ry * np.cos(angle) + ty + y1
+                    # rx, ry are relative to original center. Scale to 50x50 space:
+                    rx_50 = rx * (50.0 / ref_w_orig)
+                    ry_50 = ry * (50.0 / ref_h_orig)
+                    
+                    abs_ref_x_50 = 25.0 + rx_50
+                    abs_ref_y_50 = 25.0 + ry_50
+                    
+                    # Transform to crop coordinates in 50x50 space
+                    conn_in_crop_50 = matrix @ np.array([abs_ref_x_50, abs_ref_y_50, 1.0])
                     
                     conn_point = ConnectionPoint()
                     conn_point.name = name
-                    conn_point.x = float(nx)
-                    conn_point.y = float(ny)
+                    conn_point.x = float(x1 + conn_in_crop_50[0] * scale_x)
+                    conn_point.y = float(y1 + conn_in_crop_50[1] * scale_y)
                     comp.connection_points.append(conn_point)
                 
                 oriented_array.components.append(comp)
