@@ -114,8 +114,8 @@ class OrientationNode(Node):
             hsv_ref = cv2.cvtColor(ref_img_color, cv2.COLOR_BGR2HSV)
 
             # Broadened white range
-            lower_white = np.array([0, 0, 175])
-            upper_white = np.array([180, 80, 255])
+            lower_white = np.array([0, 0, 150])
+            upper_white = np.array([180, 120, 255])
             mask_ref = cv2.inRange(hsv_ref, lower_white, upper_white)
 
             # --- 4. Morphological cleanup ---
@@ -148,13 +148,14 @@ class OrientationNode(Node):
             self.get_logger().info(f'Reference image: {ref_img_bin.shape}')
             self.get_logger().info(f'Crop image: {crop_bin.shape}')
             
-            # Find orientation (matrix is in 50x50 space)
-            matrix = self.find_affine_transform(ref_img_bin, crop_bin)
+            matrix = None
 
             angle1, _ = self.orientation_from_white_symbol(crop_bin)
             angle2, _ = self.orientation_from_white_symbol(ref_img_bin)
 
             relative_rotation = angle2 - angle1
+            # Round to nearest 90 degrees
+            relative_rotation = round(relative_rotation / 90.0) * 90.0
 
             self.get_logger().info(f'Relative rotation (deg): {relative_rotation:.2f}')  
 
@@ -180,10 +181,22 @@ class OrientationNode(Node):
                 
                 # Extract rotation (rotation is scale-invariant)
                 angle = np.arctan2(matrix[1, 0], matrix[0, 0])
-                comp.rotation = float(angle)
-                
                 angle_deg = np.degrees(angle)
-                self.get_logger().info(f'Rotation: {angle_deg:.2f} degrees')
+                
+                # Round to nearest 90 degrees as requested
+                angle_deg_rounded = round(angle_deg / 90.0) * 90.0
+                angle_snapped = np.radians(angle_deg_rounded)
+                
+                # Update matrix with snapped rotation to keep connection points consistent
+                s = np.sqrt(matrix[0, 0]**2 + matrix[1, 0]**2)
+                matrix[0, 0] = s * np.cos(angle_snapped)
+                matrix[1, 0] = s * np.sin(angle_snapped)
+                matrix[0, 1] = -s * np.sin(angle_snapped)
+                matrix[1, 1] = s * np.cos(angle_snapped)
+
+                comp.rotation = float(angle_snapped)
+                
+                self.get_logger().info(f'Rotation: {angle_deg:.2f} degrees (rounded to {angle_deg_rounded:.2f})')
                 
                 # Transform connection points
                 for name, (rx, ry) in ref_info['connections'].items():
@@ -230,44 +243,6 @@ class OrientationNode(Node):
             debug_msg = self.bridge.cv2_to_imgmsg(final_debug_image, encoding='bgr8')
             debug_msg.header = image_msg.header
             self.debug_image_pub.publish(debug_msg)
-
-    def find_affine_transform(self, ref_img, target_img):
-        # Feature-based matching to find the affine transform
-        # Using more sensitive ORB parameters for small images
-        orb = cv2.ORB_create(nfeatures=2000, patchSize=7, edgeThreshold=7)
-        kp1, des1 = orb.detectAndCompute(ref_img, None)
-        kp2, des2 = orb.detectAndCompute(target_img, None)
-
-        # Fallback to SIFT if ORB fails (SIFT is often better for small/low-texture images)
-        if len(kp1) < 10 or len(kp2) < 10:
-            self.get_logger().info('ORB found few keypoints, trying SIFT...')
-            sift = cv2.SIFT_create()
-            kp1, des1 = sift.detectAndCompute(ref_img, None)
-            kp2, des2 = sift.detectAndCompute(target_img, None)
-            bf = cv2.BFMatcher(cv2.NORM_L2, crossCheck=True)
-        else:
-            bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
-
-        self.get_logger().info(f'Keypoints 1: {len(kp1)}')
-        self.get_logger().info(f'Keypoints 2: {len(kp2)}')
-        
-        if des1 is None or des2 is None or len(kp1) < 2 or len(kp2) < 2:
-            return None
-            
-        matches = bf.match(des1, des2)
-
-        self.get_logger().info(f'Matches: {len(matches)}')
-        
-        if len(matches) < 2:
-            return None
-            
-        src_pts = np.float32([kp1[m.queryIdx].pt for m in matches]).reshape(-1, 1, 2)
-        dst_pts = np.float32([kp2[m.trainIdx].pt for m in matches]).reshape(-1, 1, 2)
-        
-        matrix, inliers = cv2.estimateAffinePartial2D(src_pts, dst_pts)
-
-        self.get_logger().info(f'Matrix: {matrix}')
-        return matrix
 
 
     def orientation_from_white_symbol(
