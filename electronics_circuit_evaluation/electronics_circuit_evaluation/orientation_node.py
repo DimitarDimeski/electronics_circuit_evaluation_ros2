@@ -247,14 +247,14 @@ class OrientationNode(Node):
         self.get_logger().info(f'Keypoints 1: {len(kp1)}')
         self.get_logger().info(f'Keypoints 2: {len(kp2)}')
         
-        if des1 is None or des2 is None or len(kp1) < 4 or len(kp2) < 4:
+        if des1 is None or des2 is None or len(kp1) < 2 or len(kp2) < 2:
             return None
             
         matches = bf.match(des1, des2)
 
         self.get_logger().info(f'Matches: {len(matches)}')
         
-        if len(matches) < 4:
+        if len(matches) < 2:
             return None
             
         src_pts = np.float32([kp1[m.queryIdx].pt for m in matches]).reshape(-1, 1, 2)
