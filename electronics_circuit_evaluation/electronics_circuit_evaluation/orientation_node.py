@@ -84,6 +84,22 @@ class OrientationNode(Node):
         M = cv2.getRotationMatrix2D(center, angle_deg, 1.0)
         return cv2.warpAffine(mask, M, (w, h), flags=cv2.INTER_NEAREST)
 
+    def center_mask(self, mask):
+        coords = np.column_stack(np.where(mask > 0))
+        if len(coords) == 0:
+            return mask
+        
+        # Calculate centroid
+        mean_y, mean_x = np.mean(coords, axis=0)
+        
+        # Calculate shift to move centroid to (25, 25)
+        dy = 25 - mean_y
+        dx = 25 - mean_x
+        
+        M = np.float32([[1, 0, dx], [0, 1, dy]])
+        centered = cv2.warpAffine(mask, M, (50, 50), flags=cv2.INTER_NEAREST)
+        return centered
+
     def callback(self, image_msg, det_msg):
         cv_image = self.bridge.imgmsg_to_cv2(image_msg, desired_encoding='bgr8')
         oriented_array = OrientedComponentArray()
@@ -169,15 +185,19 @@ class OrientationNode(Node):
             candidate_masks = []
             ious = []
             
+            # Center masks for more robust IoU comparison (removes sensitivity to bounding box offset)
+            ref_centered = self.center_mask(ref_img_bin)
+            crop_centered = self.center_mask(crop_bin)
+
             for cand in candidates:
                 # Round each candidate to the nearest 90 degrees
                 cand_snapped = round(cand / 90.0) * 90.0
                 
-                # Rotate reference mask to see if it matches the crop mask
-                rotated_ref = self.rotate_mask(ref_img_bin, cand_snapped)
+                # Rotate centered reference mask to see if it matches the centered crop mask
+                rotated_ref = self.rotate_mask(ref_centered, cand_snapped)
                 candidate_masks.append(cv2.cvtColor(rotated_ref, cv2.COLOR_GRAY2BGR))
                 
-                iou = self.calculate_iou(rotated_ref, crop_bin)
+                iou = self.calculate_iou(rotated_ref, crop_centered)
                 ious.append(iou)
                 
                 if iou > best_iou:
@@ -188,11 +208,11 @@ class OrientationNode(Node):
             self.get_logger().info(f'IoUs: Cand1 ({candidates[0]:.2f} deg) -> {ious[0]:.4f}, Cand2 ({candidates[1]:.2f} deg) -> {ious[1]:.4f}')
             self.get_logger().info(f'Disambiguated relative rotation (deg): {relative_rotation:.2f} (IoU: {best_iou:.4f})')
 
-            # Create side-by-side image for debug: [Ref Color | Ref Mask | Rot 1 | Rot 2 | Crop Mask | Crop Color]
-            mask_ref_bgr = cv2.cvtColor(ref_img_bin, cv2.COLOR_GRAY2BGR)
-            mask_crop_bgr = cv2.cvtColor(crop_bin, cv2.COLOR_GRAY2BGR)
+            # Create side-by-side image for debug: [Ref Color | Centered Ref Mask | Rot 1 | Rot 2 | Centered Crop Mask | Crop Color]
+            mask_ref_centered_bgr = cv2.cvtColor(ref_centered, cv2.COLOR_GRAY2BGR)
+            mask_crop_centered_bgr = cv2.cvtColor(crop_centered, cv2.COLOR_GRAY2BGR)
 
-            combined = np.hstack((ref_img_color, mask_ref_bgr, candidate_masks[0], candidate_masks[1], mask_crop_bgr, crop_color))
+            combined = np.hstack((ref_img_color, mask_ref_centered_bgr, candidate_masks[0], candidate_masks[1], mask_crop_centered_bgr, crop_color))
             debug_images.append(combined)
 
             # Build matrix using the PCA-based snapped rotation
