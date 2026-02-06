@@ -28,6 +28,14 @@ def generate_launch_description():
             name='orientation_node',
             output='screen'
         ),
+
+        # Connectivity Node
+        Node(
+            package='electronics_circuit_evaluation',
+            executable='connectivity_node',
+            name='connectivity_node',
+            output='screen'
+        ),
         
         # RViz2
         Node(
