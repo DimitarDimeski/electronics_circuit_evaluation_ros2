@@ -65,8 +65,8 @@ class DetectionNode(Node):
         f"{self.class_names[class_id]} {confidence:.2f}"
         for class_id, confidence
         in zip(detections.class_id, detections.confidence)
-]
-       
+        ]
+        
         self.get_logger().info(f'Detections: {detections}')
 
         detections_image = cv_image.copy()

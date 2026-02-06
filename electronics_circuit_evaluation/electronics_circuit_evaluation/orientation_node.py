@@ -33,12 +33,9 @@ class OrientationNode(Node):
         self.get_logger().info('Orientation node started.')
 
     def load_references(self):
-        # Placeholder for loading reference images and connection points
-        # Example:
-        # self.reference_data['resistor'] = {
-        #     'image': cv2.imread('path/to/resistor_ref.png'),
-        #     'connections': {'P1': (-50, 0), 'P2': (50, 0)}
-        # }
+        """
+        Load reference images and connection points from the reference data.
+        """
 
         self.reference_data= {
             'connector_angled': {
@@ -72,6 +69,17 @@ class OrientationNode(Node):
         }
 
     def calculate_iou(self, mask1, mask2):
+        """
+        Calculate the Intersection Over Union (IoU) between two masks.
+
+        Args:
+            mask1 (np.ndarray): First mask
+            mask2 (np.ndarray): Second mask
+
+        Returns:
+            float: IoU between the two masks
+        """
+
         intersection = np.logical_and(mask1 > 0, mask2 > 0).sum()
         union = np.logical_or(mask1 > 0, mask2 > 0).sum()
         if union == 0:
@@ -79,12 +87,33 @@ class OrientationNode(Node):
         return intersection / union
 
     def rotate_mask(self, mask, angle_deg):
+        """
+        Rotate a mask by a given angle.
+
+        Args:
+            mask (np.ndarray): Mask to rotate
+            angle_deg (float): Angle to rotate the mask by
+
+        Returns:
+            np.ndarray: Rotated mask
+        """
+
         h, w = mask.shape[:2]
         center = (w // 2, h // 2)
         M = cv2.getRotationMatrix2D(center, angle_deg, 1.0)
         return cv2.warpAffine(mask, M, (w, h), flags=cv2.INTER_NEAREST)
 
     def center_mask(self, mask):
+        """
+        Center a mask by moving the centroid to (25, 25).
+
+        Args:
+            mask (np.ndarray): Mask to center
+
+        Returns:
+            np.ndarray: Centered mask
+        """
+
         coords = np.column_stack(np.where(mask > 0))
         if len(coords) == 0:
             return mask
@@ -99,6 +128,23 @@ class OrientationNode(Node):
         M = np.float32([[1, 0, dx], [0, 1, dy]])
         centered = cv2.warpAffine(mask, M, (50, 50), flags=cv2.INTER_NEAREST)
         return centered
+
+    def circular_mask(self, img, radius=20):
+        """
+        Create a circular mask for a given image.
+
+        Args:
+            img (np.ndarray): Image to create a circular mask for
+            radius (int): Radius of the circular mask
+
+        Returns:
+            np.ndarray: Circular mask
+        """
+
+        h, w = img.shape[:2]
+        mask = np.zeros((h, w), dtype=np.uint8)
+        cv2.circle(mask, (w // 2, h // 2), radius, 255, -1)
+        return cv2.bitwise_and(img, img, mask=mask)
 
     def callback(self, image_msg, det_msg):
         cv_image = self.bridge.imgmsg_to_cv2(image_msg, desired_encoding='bgr8')
@@ -117,6 +163,7 @@ class OrientationNode(Node):
             x1, y1, x2, y2 = det.bbox
             crop = cv_image[y1:y2, x1:x2]
             
+            # Get reference information
             ref_info = self.reference_data[det.class_name]
             ref_img_color = ref_info['image'].copy()
 
@@ -130,49 +177,33 @@ class OrientationNode(Node):
             crop_color = crop.copy()
 
             # --- 2. Apply circular crop (radius 20 from center) ---
-            def circular_mask(img, radius=20):
-                h, w = img.shape[:2]
-                mask = np.zeros((h, w), dtype=np.uint8)
-                cv2.circle(mask, (w // 2, h // 2), radius, 255, -1)
-                return cv2.bitwise_and(img, img, mask=mask)
-
-            ref_img_color = circular_mask(ref_img_color)
-            crop_color = circular_mask(crop_color)
+            ref_img_color = self.circular_mask(ref_img_color)
+            crop_color = self.circular_mask(crop_color)
 
             # --- 3. Convert to HSV and threshold white ---
             hsv_ref = cv2.cvtColor(ref_img_color, cv2.COLOR_BGR2HSV)
+            hsv_crop = cv2.cvtColor(crop_color, cv2.COLOR_BGR2HSV)
 
             # Broadened white range
             lower_white = np.array([0, 0, 150])
             upper_white = np.array([180, 120, 255])
-            mask_ref = cv2.inRange(hsv_ref, lower_white, upper_white)
 
-            # --- 4. Morphological cleanup ---
-            kernel_close = np.ones((5, 5), np.uint8)
-            kernel_open = np.ones((3, 3), np.uint8)
-            
-            #mask_ref = cv2.morphologyEx(mask_ref, cv2.MORPH_CLOSE, kernel_close)
-            #mask_ref = cv2.morphologyEx(mask_ref, cv2.MORPH_OPEN, kernel_open)
-
-            hsv_crop = cv2.cvtColor(crop_color, cv2.COLOR_BGR2HSV)
-            mask_crop = cv2.inRange(hsv_crop, lower_white, upper_white)
-            #mask_crop = cv2.morphologyEx(mask_crop, cv2.MORPH_CLOSE, kernel_close)
-            #mask_crop = cv2.morphologyEx(mask_crop, cv2.MORPH_OPEN, kernel_open)
-
-            ref_img_bin = mask_ref
-            crop_bin = mask_crop
+            ref_img_bin  = cv2.inRange(hsv_ref, lower_white, upper_white)
+            crop_bin = cv2.inRange(hsv_crop, lower_white, upper_white)
 
             if ref_img_bin is None:
                 self.get_logger().error(f'Reference image for {det.class_name} not found.')
                 continue
 
-            self.get_logger().info(f'Reference image: {ref_img_bin.shape}')
-            self.get_logger().info(f'Crop image: {crop_bin.shape}')
-            
-            angle1, _ = self.orientation_from_white_symbol(crop_bin)
-            angle2, _ = self.orientation_from_white_symbol(ref_img_bin)
+            # Center masks for more robust IoU comparison (removes sensitivity to bounding box offset)
+            ref_centered = self.center_mask(ref_img_bin)
+            crop_centered = self.center_mask(crop_bin)
 
-            # The PCA angle is the orientation of the principal axis in [-90, 90)
+            # Get the orientation of the crop and reference image
+            angle1, _ = self.orientation_from_white_symbol(crop_centered)
+            angle2, _ = self.orientation_from_white_symbol(ref_centered)
+
+            # The PCA angle is the orientation of the principal axis in [-90, 90) and can't differentiate between 0 and 180 degrees.
             # We want to find the rotation that maps ref to crop.
             # Base rotation candidate:
             base_angle = angle1 - angle2
@@ -185,10 +216,6 @@ class OrientationNode(Node):
             candidate_masks = []
             ious = []
             
-            # Center masks for more robust IoU comparison (removes sensitivity to bounding box offset)
-            ref_centered = self.center_mask(ref_img_bin)
-            crop_centered = self.center_mask(crop_bin)
-
             for cand in candidates:
                 # Round each candidate to the nearest 90 degrees
                 cand_snapped = round(cand / 90.0) * 90.0
@@ -200,6 +227,7 @@ class OrientationNode(Node):
                 iou = self.calculate_iou(rotated_ref, crop_centered)
                 ious.append(iou)
                 
+                # Find the best IoU and corresponding snapped angle
                 if iou > best_iou:
                     best_iou = iou
                     best_angle_snapped = cand_snapped
@@ -212,7 +240,7 @@ class OrientationNode(Node):
             mask_ref_centered_bgr = cv2.cvtColor(ref_centered, cv2.COLOR_GRAY2BGR)
             mask_crop_centered_bgr = cv2.cvtColor(crop_centered, cv2.COLOR_GRAY2BGR)
 
-            combined = np.hstack((ref_img_color, mask_ref_centered_bgr, candidate_masks[0], candidate_masks[1], mask_crop_centered_bgr, crop_color))
+            combined = np.hstack((ref_img_color, mask_ref_centered_bgr, mask_crop_centered_bgr, crop_color))
             debug_images.append(combined)
 
             # Build matrix using the PCA-based snapped rotation
@@ -239,9 +267,7 @@ class OrientationNode(Node):
                 
                 # The rotation is already snapped to 90 degrees
                 comp.rotation = float(np.radians(relative_rotation))
-                
-                self.get_logger().info(f'Final snapped rotation: {relative_rotation:.2f} degrees')
-                
+                                
                 # Transform connection points
                 for name, (rx, ry) in ref_info['connections'].items():
                     # rx, ry are relative to original center. Scale to 50x50 space:
@@ -291,7 +317,7 @@ class OrientationNode(Node):
 
     def orientation_from_white_symbol(
         self,
-        image_bgr,
+        mask,
         min_area=10
     ):
         """
@@ -307,14 +333,10 @@ class OrientationNode(Node):
             debug (dict): Optional debug outputs
         """
 
-        mask = image_bgr
-
-        # --- 3. Find contours ---
+        # Find contours
         contours, _ = cv2.findContours(
             mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE
         )
-
-        self.get_logger().info(f'Contours: {len(contours)}')
 
         # Keep only meaningful contours
         contours = [c for c in contours if cv2.contourArea(c) > min_area]
@@ -324,7 +346,7 @@ class OrientationNode(Node):
         # Merge all contours into one point cloud
         pts = np.vstack(contours).squeeze().astype(np.float32)
 
-        # --- 4. PCA ---
+        # PCA
         mean = np.mean(pts, axis=0)
         pts_centered = pts - mean
 
@@ -335,7 +357,7 @@ class OrientationNode(Node):
         idx = np.argmax(eigenvalues)
         direction = eigenvectors[:, idx]
 
-        # --- 5. Angle computation ---
+        # Angle computation
         angle_rad = math.atan2(direction[1], direction[0])
         angle_deg = np.degrees(angle_rad)
 
