@@ -103,6 +103,30 @@ class ConnectivityNode(Node):
         netlist_msg.header = msg.header
         netlist_msg.netlist_json = json.dumps(netlist_data)
         self.publisher_.publish(netlist_msg)
+        
+        # Log component connections
+        self.get_logger().info('--- Component Connections ---')
+        for comp in netlist_data['components']:
+            connections_info = []
+            for pin, net_id in comp['connections'].items():
+                # Find other points in the same net
+                connected_to = []
+                for net in netlist_data['nets']:
+                    if net['id'] == net_id:
+                        for point in net['points']:
+                            # Don't include the current component's pin
+                            if not point.startswith(f"{comp['id']}."):
+                                connected_to.append(point)
+                
+                if connected_to:
+                    connections_info.append(f"{pin} -> {', '.join(connected_to)}")
+                else:
+                    connections_info.append(f"{pin} -> (no other connections)")
+            
+            self.get_logger().info(f"Component {comp['id']} ({comp['type']}):")
+            for info in connections_info:
+                self.get_logger().info(f"  {info}")
+        self.get_logger().info('-----------------------------')
         # self.get_logger().info('Published netlist.')
 
 def main(args=None):
